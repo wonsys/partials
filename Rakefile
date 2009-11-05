@@ -6,7 +6,7 @@ CLEANUP_AFTER_GENERATION = false
 OUTPUT_DIRECTORY = './site'
 
 # This task generate all needed directories
-task :generate_directory_structured do
+task :generate_directory_structure do
   ['modules', 'pages', 'pages/commons', 'pages/index', OUTPUT_DIRECTORY].each do |dir|
     system("mkdir #{dir}")
   end
@@ -16,72 +16,100 @@ end
 task :build_site do
   print "Pages to generate:"
   pages = Dir.entries('./pages').reject { |item| item == '.' || item == '..' || item == 'commons' }
-  pages.each do |page|
-    print " '#{page}'"
-  end
+  print ' \'' + pages.join('\', \'') + '\''
   puts ""
 
   pages.each do |page|
+    puts "\n*** Page '#{page}' ***"
     page_path = "./pages/#{page}"
     # Get main source
-    puts "Getting main source for '#{page}' page..."
-    main_code = Hpricot(open(page_path + "/pp-main.html"))
-    # Get partials needed from the main source
-    puts "Getting needed partials..."
-    partials = main_code.search('pp-include').map { |i| i.inner_html }
-    # Checking existence of all needed partials
-    source = main_code.html
-    # Looking for partial follows this gerarchy:
-    # - _partial.rb
-    # - modules
-    # - _partial.html
-    puts "Partials needed for '#{page}' page:"
-    partials.each do |p|
-      print "\t_#{p}..."
-      if File.exist?("./pages/#{page}" + '/_' + p + '.rb')
-        external_source = eval(File.read("./pages/#{page}" + '/_' + p + '.rb'))
-        if external_source.nil?
-          # nil returned ... it contains just a method? => try to load a new generated html partial?
-          source.gsub!("<pp-include>#{p}</pp-include>", File.read("./pages/#{page}" + '/_' + p + '.html'))
-          print "GENERATED + ADDED\n"
-          if CLEANUP_AFTER_GENERATION
-            File.delete("./pages/#{page}" + '/_' + p + '.html')
-            puts "./pages/#{page}/_#{p}.html NOT DELETED" if File.exist?("./pages/#{page}" + '/_' + p + '.html')
+    puts "\tGetting main source for page..."
+    if File.exist?("./pages/#{page}/pp-main.html")
+      main_code = Hpricot(open(page_path + "/pp-main.html"))
+      # Get partials needed from the main source
+      partials = main_code.search('pp-include').map { |i| i.inner_html }
+      # Checking existence of all needed partials
+      source = main_code.html
+      # Looking for partial follows this gerarchy:
+      # - _partial.rb in page's directory
+      # - _partial.rb in commons directory
+      # - modules
+      # - _partial.html in page's directory
+      # - _partial.html in commons directory
+      if partials.any?
+        puts "\tPartials needed for page:"
+        partials.each do |p|
+          print "\t\t#{p} ... "
+          if File.exist?("./pages/#{page}" + '/_' + p + '.rb')
+            # This is a ruby partial in the page's directory
+            external_source = eval(File.read("./pages/#{page}" + '/_' + p + '.rb'))
+            if external_source.nil?
+              # nil returned ... it contains just a method? => try to load a new generated html partial?
+              source.gsub!("<pp-include>#{p}</pp-include>", File.read("./pages/#{page}" + '/_' + p + '.html'))
+              print "Generated + Added (in page dir)\n"
+              if CLEANUP_AFTER_GENERATION
+                File.delete("./pages/#{page}" + '/_' + p + '.html')
+                puts "./pages/#{page}/_#{p}.html NOT DELETED" if File.exist?("./pages/#{page}" + '/_' + p + '.html')
+              end
+            else
+              # evaluation returned a string ... just insert it in the final source
+              source.gsub!("<pp-include>#{p}</pp-include>", external_source)
+              print "Executed + Added (in page dir)\n"
+            end
+          elsif File.exist?("./pages/commons" + '/_' + p + '.rb')
+            # This is a ruby partial in commons directory
+            external_source = eval(File.read("./pages/commons" + '/_' + p + '.rb'))
+            if external_source.nil?
+              # nil returned ... it contains just a method? => try to load a new generated html partial?
+              source.gsub!("<pp-include>#{p}</pp-include>", File.read("./pages/commons" + '/_' + p + '.html'))
+              print "Generated + Added (in commons dir)\n"
+              if CLEANUP_AFTER_GENERATION
+                File.delete("./pages/commons" + '/_' + p + '.html')
+                puts "./pages/commons/_#{p}.html NOT DELETED" if File.exist?("./pages/commons" + '/_' + p + '.html')
+              end
+            else
+              # evaluation returned a string ... just insert it in the final source
+              source.gsub!("<pp-include>#{p}</pp-include>", external_source)
+              print "Executed + Added (in commons dir)\n"
+            end
+          elsif File.exist?("./modules/#{p}/pp-main.rb")
+            # This is a ruby partial in modules directory
+            source_from_module = eval(File.read("./modules/#{p}/pp-main.rb"))
+            if source_from_module.nil?
+              # nil returned ... it contains just a method? => try to load a new generated html partial?
+              source.gsub!("<pp-include>#{p}</pp-include>", File.read("./modules/#{p}/_#{p}.html"))
+              print "Generated + Added (from module)\n"
+              if CLEANUP_AFTER_GENERATION
+                File.delete("./modules/#{p}/_#{p}.html")
+                puts "./modules/#{p}/_#{p}.html NOT DELETED" if File.exist?("./modules/#{p}/_#{p}.html")
+              end
+            else
+              # evaluation returned a string ... just insert it in the final source
+              source.gsub!("<pp-include>#{p}</pp-include>", source_from_module)
+              print "Executed + Added (from module)\n"
+            end
+          elsif File.exist?("./pages/#{page}" + '/_' + p + '.html')
+            # This is an html partial in page's directory
+            source.gsub!("<pp-include>#{p}</pp-include>", File.read("./pages/#{page}" + '/_' + p + '.html'))
+            print "Added (from page dir)\n"
+          elsif File.exist?("./pages/commons" + '/_' + p + '.html')
+            # This is an html partial in commons directory
+            source.gsub!("<pp-include>#{p}</pp-include>", File.read("./pages/commons" + '/_' + p + '.html'))
+            print "Added (from commons)\n"
+          else
+            puts "ERROR - Missing partial (#{p})"
           end
-        else
-          # evaluation returned a string ... just insert it in the final source
-          source.gsub!("<pp-include>#{p}</pp-include>", external_source)
-          print "EXECUTED + ADDED\n"
         end
-      elsif File.exist?("./modules/#{p}/pp-main.rb")
-        source_from_module = eval(File.read("./modules/#{p}/pp-main.rb"))
-        if source_from_module.nil?
-          # nil returned ... it contains just a method? => try to load a new generated html partial?
-          source.gsub!("<pp-include>#{p}</pp-include>", File.read("./modules/#{p}/_#{p}.html"))
-          print "GENERATED (from Module) + ADDED\n"
-          if CLEANUP_AFTER_GENERATION
-            File.delete("./modules/#{p}/_#{p}.html")
-            puts "./modules/#{p}/_#{p}.html NOT DELETED" if File.exist?("./modules/#{p}/_#{p}.html")
-          end
-        else
-          # evaluation returned a string ... just insert it in the final source
-          source.gsub!("<pp-include>#{p}</pp-include>", source_from_module)
-          print "EXECUTED (from Module) + ADDED\n"
-        end
-      elsif File.exist?("./pages/#{page}" + '/_' + p + '.html')
-        source.gsub!("<pp-include>#{p}</pp-include>", File.read("./pages/#{page}" + '/_' + p + '.html'))
-        print "ADDED\n"
-      elsif File.exist?("./pages/commons" + '/_' + p + '.html')
-        source.gsub!("<pp-include>#{p}</pp-include>", File.read("./pages/commons" + '/_' + p + '.html'))
-        print "ADDED\n"
       else
-        puts "ERROR - Missing partial (#{p})"
+        puts "\tPartials needed for '#{page}' page: none!"
       end
+      # Create a new file html (future final)
+      f = File.new("#{OUTPUT_DIRECTORY}/#{page}.html", 'w+')
+      f << source
+      f.close
+    else
+      puts "\tUnable to find ./pages/#{page}/pp-main.html, this page won't be generated!"
     end
-    # Create a new file html (future final)
-    f = File.new("#{OUTPUT_DIRECTORY}/#{page}.html", 'w+')
-    f << source
-    f.close
   end
 end
 
